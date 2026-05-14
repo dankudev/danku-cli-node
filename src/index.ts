@@ -6,30 +6,30 @@ import { Console, Effect } from "effect";
 const packageName = "@dankudev/cli";
 const version = "0.1.0";
 
-const template = Args.text({ name: "template" }).pipe(
+const templateArg = Args.text({ name: "template" }).pipe(
 	Args.withDescription("Template to generate, for example: sveltekit")
 );
 
-const projectName = Args.text({ name: "name" }).pipe(
+const projectNameArg = Args.text({ name: "name" }).pipe(
 	Args.withDescription("Name of the project to create")
 );
 
-const packageManager = Options.choice("package-manager", ["pnpm", "npm", "yarn"]).pipe(
+const packageManagerOption = Options.choice("package-manager", ["pnpm", "npm", "yarn"]).pipe(
 	Options.withDefault("pnpm"),
 	Options.withDescription("Package manager to configure for the generated project")
 );
 
-const dryRun = Options.boolean("dry-run").pipe(
+const dryRunOption = Options.boolean("dry-run").pipe(
 	Options.withDescription("Print what would be generated without writing files")
 );
 
 const newCommand = Command.make(
 	"new",
 	{
-		template,
-		projectName,
-		packageManager,
-		dryRun
+		template: templateArg,
+		projectName: projectNameArg,
+		packageManager: packageManagerOption,
+		dryRun: dryRunOption
 	},
 	({ template, projectName, packageManager, dryRun }) =>
 		Effect.gen(function* () {
