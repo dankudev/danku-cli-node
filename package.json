@@ -21,8 +21,8 @@
 		"build": "tsdown",
 		"check": "tsc --noEmit",
 		"dev": "tsx src/index.ts",
-		"format": "prettier --write .",
-		"lint": "prettier --check . && eslint .",
+		"format": "oxfmt",
+		"lint": "oxfmt --check && oxlint",
 		"prepack": "pnpm run build",
 		"prepublishOnly": "pnpm run lint && pnpm run check && pnpm run build"
 	},
@@ -50,13 +50,11 @@
 		"effect": "^3.21.2"
 	},
 	"devDependencies": {
-		"@eslint/js": "^10.0.1",
 		"@types/node": "^24.12.0",
-		"eslint": "^10.1.0",
-		"prettier": "^3.8.1",
+		"oxfmt": "^0.49.0",
+		"oxlint": "^1.64.0",
 		"tsdown": "^0.22.0",
 		"tsx": "^4.21.0",
-		"typescript": "^5.9.3",
-		"typescript-eslint": "^8.58.0"
+		"typescript": "^5.9.3"
 	}
 }
