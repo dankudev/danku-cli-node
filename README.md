@@ -24,6 +24,38 @@ danku --help
 danku new sveltekit my-app
 ```
 
+## Configuration
+
+The `new sveltekit` command mirrors the original Danku CLI flow. It reads
+`~/.danku/cli/node/config.jsonc`, creates that file with commented defaults if missing, then:
+
+- creates a private GitHub repository
+- runs `pnpm dlx sv create` with Danku's SvelteKit defaults
+- adds ESLint, Playwright, Prettier, Tailwind CSS, and Vitest via `sv add`
+- copies Danku boilerplate from this package's `templates` directory
+- optionally applies `marketing` or `saasFs` boilerplate based on config
+- configures Cloudflare Workers, D1, GitHub variables/secrets, and deploy workflow when configured
+
+Minimal config shape:
+
+```jsonc
+{
+	"boilerplate": {},
+	"deploymentTarget": {
+		"cloudflare": {
+			"accountId": "",
+			"token": "",
+			"zoneId": ""
+		}
+	},
+	"gitProvider": {
+		"gitHub": {
+			"token": ""
+		}
+	}
+}
+```
+
 ## Development
 
 Install dependencies:

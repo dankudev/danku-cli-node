@@ -6,6 +6,7 @@ export default defineConfig({
 	format: "esm",
 	fixedExtension: false,
 	dts: true,
+	copy: ["templates"],
 	sourcemap: true,
 	clean: true,
 	failOnWarn: true

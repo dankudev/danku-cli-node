@@ -3,6 +3,8 @@ import { Args, Command, Options } from "@effect/cli";
 import { NodeContext, NodeRuntime } from "@effect/platform-node";
 import { Console, Effect } from "effect";
 
+import { createProject } from "./generator.js";
+
 const packageName = "@dankudev/cli";
 const version = "0.1.0";
 
@@ -23,6 +25,21 @@ const dryRunOption = Options.boolean("dry-run").pipe(
 	Options.withDescription("Print what would be generated without writing files")
 );
 
+const runGenerator = (template: string, projectName: string, dryRun: boolean) =>
+	Effect.tryPromise({
+		try: () => createProject({ dryRun, projectName, template }),
+		catch: (error) => (error instanceof Error ? error.message : "Unknown generation error")
+	}).pipe(
+		Effect.catchAll((message) =>
+			Effect.gen(function* () {
+				yield* Console.error(`DANKU❌ ${message}`);
+				yield* Effect.sync(() => {
+					process.exitCode = 1;
+				});
+			})
+		)
+	);
+
 const newCommand = Command.make(
 	"new",
 	{
@@ -33,14 +50,15 @@ const newCommand = Command.make(
 	},
 	({ template, projectName, packageManager, dryRun }) =>
 		Effect.gen(function* () {
-			yield* Console.log(`Preparing ${template} project "${projectName}" with ${packageManager}.`);
-
-			if (dryRun) {
-				yield* Console.log("Dry run enabled; no files were written.");
+			if (packageManager !== "pnpm") {
+				yield* Console.error("DANKU❌ The SvelteKit generator currently supports pnpm only.");
+				yield* Effect.sync(() => {
+					process.exitCode = 1;
+				});
 				return;
 			}
 
-			yield* Console.log("Project generation is not implemented yet.");
+			yield* runGenerator(template, projectName, dryRun);
 		})
 ).pipe(Command.withDescription("Generate a new Danku project from a template"));
 
