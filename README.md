@@ -40,10 +40,15 @@ Provider and target selection:
 
 ```bash
 danku new sveltekit my-app \
-  --git-provider github \
-  --deployment-target cloudflare \
+  --git-provider auto \
+  --deployment-target auto \
   --boilerplate default
 ```
+
+`auto` is the default. It enables GitHub when `DANKU_GITHUB_TOKEN` is set, and Cloudflare
+when `DANKU_CLOUDFLARE_API_TOKEN`, `DANKU_CLOUDFLARE_ACCOUNT_ID`, and
+`DANKU_CLOUDFLARE_ZONE_ID` are set. Use `github`/`cloudflare` to require a provider, or `none`
+to disable one explicitly.
 
 Non-secret IDs can be passed as options or read from env:
 

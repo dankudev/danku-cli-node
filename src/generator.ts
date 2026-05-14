@@ -373,45 +373,9 @@ import type { User } from "$lib/server/auth";
 			"sv",
 			"add",
 			"eslint",
-			"--install",
-			"pnpm",
-			"--cwd",
-			projectName
-		]);
-		await this.executeCommand("pnpm", [
-			"dlx",
-			"sv",
-			"add",
 			"playwright",
-			"--install",
-			"pnpm",
-			"--cwd",
-			projectName
-		]);
-		await this.executeCommand("pnpm", [
-			"dlx",
-			"sv",
-			"add",
 			"prettier",
-			"--install",
-			"pnpm",
-			"--cwd",
-			projectName
-		]);
-		await this.executeCommand("pnpm", [
-			"dlx",
-			"sv",
-			"add",
 			"tailwindcss=plugins:typography,forms",
-			"--install",
-			"pnpm",
-			"--cwd",
-			projectName
-		]);
-		await this.executeCommand("pnpm", [
-			"dlx",
-			"sv",
-			"add",
 			"vitest=usages:unit,component",
 			"--install",
 			"pnpm",
@@ -718,7 +682,7 @@ import type { User } from "$lib/server/auth";
 		console.log(
 			"Would run: pnpm dlx sv create --template minimal --types ts --no-add-ons --install pnpm"
 		);
-		console.log("Would add: eslint, playwright, prettier, tailwindcss, vitest");
+		console.log("Would run one sv add call for: eslint, playwright, prettier, tailwindcss, vitest");
 		console.log(
 			`Would copy Danku boilerplate: default${boilerplateName === "default" ? "" : ` + ${boilerplateName}`}`
 		);
