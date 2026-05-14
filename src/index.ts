@@ -26,22 +26,14 @@ const dryRunOption = Options.boolean("dry-run").pipe(
 	Options.withDescription("Print what would be generated without writing files")
 );
 
-const gitProviderOption = Options.choice("git-provider", ["auto", "github", "none"]).pipe(
-	Options.withDefault("auto"),
-	Options.withDescription(
-		"Git provider to configure. auto uses GitHub when DANKU_GITHUB_TOKEN is set."
-	)
+const gitProviderOption = Options.choice("git-provider", ["github", "none"]).pipe(
+	Options.withDefault("github"),
+	Options.withDescription("Git provider to configure")
 );
 
-const deploymentTargetOption = Options.choice("deployment-target", [
-	"auto",
-	"cloudflare",
-	"none"
-]).pipe(
-	Options.withDefault("auto"),
-	Options.withDescription(
-		"Deployment target to configure. auto uses Cloudflare when Cloudflare env vars are set."
-	)
+const deploymentTargetOption = Options.choice("deployment-target", ["cloudflare", "none"]).pipe(
+	Options.withDefault("cloudflare"),
+	Options.withDescription("Deployment target to configure")
 );
 
 const boilerplateOption = Options.choice("boilerplate", ["default", "marketing", "saas-fs"]).pipe(
@@ -87,9 +79,9 @@ type NewCommandInput = {
 	boilerplate: "default" | "marketing" | "saas-fs";
 	cloudflareAccountId: Option.Option<string>;
 	cloudflareZoneId: Option.Option<string>;
-	deploymentTarget: "auto" | "cloudflare" | "none";
+	deploymentTarget: "cloudflare" | "none";
 	dryRun: boolean;
-	gitProvider: "auto" | "github" | "none";
+	gitProvider: "github" | "none";
 	packageManager: "pnpm" | "npm" | "yarn";
 	postHogApiKey: Option.Option<string>;
 	projectName: string;
@@ -159,23 +151,14 @@ const buildGeneratorConfig = (input: NewCommandInput, secrets: EnvSecrets): Gene
 	};
 	const cloudflareAccountId = unwrapText(input.cloudflareAccountId);
 	const cloudflareZoneId = unwrapText(input.cloudflareZoneId);
-	const shouldUseGitHub =
-		input.gitProvider === "github" ||
-		(input.gitProvider === "auto" && secrets.githubToken !== undefined);
-	const shouldUseCloudflare =
-		input.deploymentTarget === "cloudflare" ||
-		(input.deploymentTarget === "auto" &&
-			secrets.cloudflareToken !== undefined &&
-			cloudflareAccountId !== undefined &&
-			cloudflareZoneId !== undefined);
 
-	if (shouldUseGitHub) {
+	if (input.gitProvider === "github") {
 		generatorConfig.gitProvider.gitHub = {
 			token: requireOption(secrets.githubToken, "Missing GitHub token. Set DANKU_GITHUB_TOKEN.")
 		};
 	}
 
-	if (shouldUseCloudflare) {
+	if (input.deploymentTarget === "cloudflare") {
 		generatorConfig.deploymentTarget.cloudflare = {
 			accountId: requireOption(
 				cloudflareAccountId,
@@ -230,14 +213,8 @@ const buildGeneratorConfig = (input: NewCommandInput, secrets: EnvSecrets): Gene
 		};
 	}
 
-	if (input.gitProvider === "auto" && input.deploymentTarget === "auto") {
-		return generatorConfig;
-	}
-
-	if (!shouldUseGitHub && !shouldUseCloudflare) {
-		throw new Error(
-			"At least one of --git-provider or --deployment-target must be enabled or auto-detected from env."
-		);
+	if (input.gitProvider === "none" && input.deploymentTarget === "none") {
+		throw new Error("At least one of --git-provider or --deployment-target must be enabled.");
 	}
 
 	return generatorConfig;
