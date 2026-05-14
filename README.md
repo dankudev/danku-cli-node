@@ -24,36 +24,55 @@ danku --help
 danku new sveltekit my-app
 ```
 
-## Configuration
+## Project generation
 
-The `new sveltekit` command mirrors the original Danku CLI flow. It reads
-`~/.danku/cli/node/config.jsonc`, creates that file with commented defaults if missing, then:
+The `new sveltekit` command mirrors the original Danku CLI flow, but uses CLI options with
+environment-variable fallbacks instead of a `.danku` config file:
 
 - creates a private GitHub repository
 - runs `pnpm dlx sv create` with Danku's SvelteKit defaults
 - adds ESLint, Playwright, Prettier, Tailwind CSS, and Vitest via `sv add`
 - copies Danku boilerplate from this package's `templates` directory
-- optionally applies `marketing` or `saasFs` boilerplate based on config
+- optionally applies `marketing` or `saas-fs` boilerplate
 - configures Cloudflare Workers, D1, GitHub variables/secrets, and deploy workflow when configured
 
-Minimal config shape:
+Provider and target selection:
 
-```jsonc
-{
-	"boilerplate": {},
-	"deploymentTarget": {
-		"cloudflare": {
-			"accountId": "",
-			"token": "",
-			"zoneId": ""
-		}
-	},
-	"gitProvider": {
-		"gitHub": {
-			"token": ""
-		}
-	}
-}
+```bash
+danku new sveltekit my-app \
+  --git-provider github \
+  --deployment-target cloudflare \
+  --boilerplate default
+```
+
+Non-secret IDs can be passed as options or read from env:
+
+| Option                         | Environment fallback               |
+| ------------------------------ | ---------------------------------- |
+| `--cloudflare-account-id`      | `DANKU_CLOUDFLARE_ACCOUNT_ID`      |
+| `--cloudflare-zone-id`         | `DANKU_CLOUDFLARE_ZONE_ID`         |
+| `--posthog-api-key`            | `DANKU_POSTHOG_API_KEY`            |
+| `--stripe-publishable-key`     | `DANKU_STRIPE_PUBLISHABLE_KEY`     |
+| `--stripe-publishable-key-dev` | `DANKU_STRIPE_PUBLISHABLE_KEY_DEV` |
+
+Secrets are env-only:
+
+| Secret                        | Environment variable          |
+| ----------------------------- | ----------------------------- |
+| GitHub token                  | `DANKU_GITHUB_TOKEN`          |
+| Cloudflare API token          | `DANKU_CLOUDFLARE_API_TOKEN`  |
+| Stripe production secret key  | `DANKU_STRIPE_SECRET_KEY`     |
+| Stripe development secret key | `DANKU_STRIPE_SECRET_KEY_DEV` |
+| Stripe webhook secret         | `DANKU_STRIPE_WEBHOOK_SECRET` |
+
+Example:
+
+```bash
+DANKU_GITHUB_TOKEN=... \
+DANKU_CLOUDFLARE_ACCOUNT_ID=... \
+DANKU_CLOUDFLARE_API_TOKEN=... \
+DANKU_CLOUDFLARE_ZONE_ID=... \
+danku new sveltekit my-app
 ```
 
 ## Development

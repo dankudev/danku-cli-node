@@ -1,18 +1,19 @@
-import { applyEdits, modify, parse } from "jsonc-parser";
+import { applyEdits, modify } from "jsonc-parser";
 import { Cloudflare, CloudflareError } from "cloudflare";
 import sodium from "libsodium-wrappers";
 import { spawn, type SpawnOptions } from "node:child_process";
 import crypto from "node:crypto";
 import * as fs from "node:fs/promises";
-import { EOL, homedir, platform } from "node:os";
+import { EOL, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Octokit, RequestError } from "octokit";
 import { stringify } from "yaml";
 
-import { type Config, configSchema } from "./types.js";
+import type { Config } from "./types.js";
 
 type NewProjectOptions = {
+	config: Config;
 	dryRun: boolean;
 	projectName: string;
 	template: string;
@@ -36,42 +37,6 @@ type WorkflowStep = {
 	with?: Record<string, number | string>;
 };
 
-const configDir = join(homedir(), ".danku", "cli", "node");
-const configPath = join(configDir, "config.jsonc");
-
-const defaultConfigContent = `{
-  // Configuration file for DANKU CLI
-  // Visit https://danku.dev/svelte/cli for more detailed information
-
-  "boilerplate": {
-    // "marketing": {
-    //   "postHogApiKey": ""
-    // }
-    // "saasFs": {
-    //   "postHogApiKey": "",
-    //   "stripePublishableKey": "",
-    //   "stripePublishableKeyDev": "",
-    //   "stripeSecretKey": "",
-    //   "stripeSecretKeyDev": "",
-    //   "stripeWebhookSecret": ""
-    // }
-  },
-
-  "deploymentTarget": {
-    // "cloudflare": {
-    //   "accountId": "",
-    //   "token": "",
-    //   "zoneId": ""
-    // }
-  },
-
-  "gitProvider": {
-    // "gitHub": {
-    //   "token": ""
-    // }
-  }
-}`;
-
 const uuidRegex = /^[\da-f]{8}-[\da-f]{4}-[1-5][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i;
 
 class GenerationError extends Error {
@@ -84,15 +49,12 @@ class DankuGenerator {
 	private octokit = new Octokit();
 	private owner = "";
 
-	async createProject({ dryRun, projectName, template }: NewProjectOptions): Promise<void> {
+	async createProject({ config, dryRun, projectName, template }: NewProjectOptions): Promise<void> {
 		if (template !== "sveltekit") {
 			throw new GenerationError(
 				`Unsupported template "${template}". Supported templates: sveltekit`
 			);
 		}
-
-		const config = await this.readConfig();
-		await this.validateTarget(config, projectName);
 
 		const projectPath = join(process.cwd(), projectName);
 		if (await pathExists(projectPath)) {
@@ -106,7 +68,11 @@ class DankuGenerator {
 			return;
 		}
 
-		const createRepository = await this.gitCreateRepository(config, projectName);
+		await this.validateTarget(config, projectName);
+
+		const createRepository = config.gitProvider.gitHub
+			? await this.gitCreateRepository(config, projectName)
+			: undefined;
 		await this.createSvelteKitProject(projectName);
 		await this.addDefaultBoilerplate(projectName);
 
@@ -127,10 +93,12 @@ class DankuGenerator {
 		await this.executeCommand("git", ["init"], { cwd: projectName });
 		await this.executeCommand("git", ["add", "."], { cwd: projectName });
 		await this.executeCommand("git", ["commit", "-m", "Initial commit"], { cwd: projectName });
-		await this.executeCommand("git", ["remote", "add", "origin", createRepository], {
-			cwd: projectName
-		});
-		await this.executeCommand("git", ["push", "-u", "origin", "main"], { cwd: projectName });
+		if (createRepository) {
+			await this.executeCommand("git", ["remote", "add", "origin", createRepository], {
+				cwd: projectName
+			});
+			await this.executeCommand("git", ["push", "-u", "origin", "main"], { cwd: projectName });
+		}
 
 		console.log(`DANKU✅ Successfully created SvelteKit project "${projectName}"`);
 	}
@@ -741,8 +709,12 @@ import type { User } from "$lib/server/auth";
 				? "marketing"
 				: "default";
 
+		const hasGitHub = config.gitProvider.gitHub !== undefined;
+
 		console.log("Dry run enabled; no files were written.");
-		console.log(`Would create private GitHub repository: ${projectName}`);
+		if (hasGitHub) {
+			console.log(`Would create private GitHub repository: ${projectName}`);
+		}
 		console.log(
 			"Would run: pnpm dlx sv create --template minimal --types ts --no-add-ons --install pnpm"
 		);
@@ -752,34 +724,10 @@ import type { User } from "$lib/server/auth";
 		);
 
 		if (config.deploymentTarget.cloudflare) {
-			console.log("Would configure Cloudflare Workers deployment and GitHub Actions");
-		}
-	}
-
-	private async readConfig(): Promise<Config> {
-		if (!(await pathExists(configPath))) {
-			await fs.mkdir(configDir, { recursive: true });
-			await fs.writeFile(configPath, defaultConfigContent, { mode: 0o600 });
-			throw new GenerationError(
-				`Created default configuration file at ${configPath}. Please update it before running this command again.`
+			console.log(
+				`Would configure Cloudflare Workers deployment${hasGitHub ? " and GitHub Actions" : ""}`
 			);
 		}
-
-		const rawConfig = await fs.readFile(configPath, "utf8");
-		const parsedConfig = parse(rawConfig);
-		const result = configSchema.safeParse(parsedConfig);
-
-		if (!result.success) {
-			const errorMessages = result.error.issues
-				.map((issue) => {
-					const path = issue.path.length > 0 ? issue.path.join(".") : "(root)";
-					return `${path}: ${issue.message}`;
-				})
-				.join(", ");
-			throw new GenerationError(`Configuration validation failed: ${errorMessages}`);
-		}
-
-		return result.data;
 	}
 
 	private async replaceInFile(

@@ -35,9 +35,6 @@ importers:
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
-      zod:
-        specifier: ^4.4.3
-        version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: ^24.12.0
@@ -1420,9 +1417,6 @@ packages:
     engines: {node: '>= 14.6'}
     hasBin: true
 
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
-
 snapshots:
 
   '@babel/generator@8.0.0-rc.4':
@@ -2542,5 +2536,3 @@ snapshots:
   ws@8.20.1: {}
 
   yaml@2.9.0: {}
-
-  zod@4.4.3: {}
