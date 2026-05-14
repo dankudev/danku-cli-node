@@ -3,7 +3,7 @@ import { Args, Command, Options } from "@effect/cli";
 import { NodeContext, NodeRuntime } from "@effect/platform-node";
 import { Console, Effect } from "effect";
 
-const packageName = "@danku/cli";
+const packageName = "@dankudev/cli";
 const version = "0.1.0";
 
 const template = Args.text({ name: "template" }).pipe(
@@ -44,8 +44,8 @@ const newCommand = Command.make(
 		})
 ).pipe(Command.withDescription("Generate a new Danku project from a template"));
 
-const rootCommand = Command.make("dnk", {}, () =>
-	Console.log(`Danku CLI (${packageName})\n\nRun dnk --help to see available commands.`)
+const rootCommand = Command.make("danku", {}, () =>
+	Console.log(`Danku CLI (${packageName})\n\nRun danku --help to see available commands.`)
 ).pipe(
 	Command.withDescription("Generate and manage Danku application boilerplate"),
 	Command.withSubcommands([newCommand])

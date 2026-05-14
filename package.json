@@ -1,10 +1,10 @@
 {
-	"name": "@danku/cli",
+	"name": "@dankudev/cli",
 	"version": "0.1.0",
-	"description": "Danku command-line tools for generating and managing application boilerplate.",
+	"description": "Danku Node CLI for generating and managing application boilerplate.",
 	"type": "module",
 	"bin": {
-		"dnk": "./dist/index.js"
+		"danku": "./dist/index.js"
 	},
 	"files": [
 		"dist",

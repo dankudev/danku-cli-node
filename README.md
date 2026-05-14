@@ -1,9 +1,9 @@
-# Danku CLI
+# Danku CLI Node
 
-Danku CLI is a command-line tool for generating and managing Danku application boilerplate.
+Danku CLI Node is a pnpm-managed TypeScript command-line tool for generating and managing Danku application boilerplate.
 
-- npm package: `@danku/cli`
-- executable command: `dnk`
+- npm package: `@dankudev/cli`
+- executable command: `danku`
 - package manager: pnpm
 - CLI framework: [`@effect/cli`](https://www.npmjs.com/package/@effect/cli)
 
@@ -12,16 +12,16 @@ Danku CLI is a command-line tool for generating and managing Danku application b
 Run without installing globally:
 
 ```bash
-pnpm dlx @danku/cli --help
-pnpm dlx @danku/cli new sveltekit my-app
+pnpm dlx @dankudev/cli --help
+pnpm dlx @dankudev/cli new sveltekit my-app
 ```
 
-Install globally if you want the `dnk` command available everywhere:
+Install globally if you want the `danku` command available everywhere:
 
 ```bash
-pnpm add -g @danku/cli
-dnk --help
-dnk new sveltekit my-app
+pnpm add -g @dankudev/cli
+danku --help
+danku new sveltekit my-app
 ```
 
 ## Development
@@ -55,9 +55,9 @@ pnpm pack --pack-destination /tmp
 
 ## Publishing
 
-This package is configured for public npm publishing under the `@danku` scope.
+This package is configured for public npm publishing under the `@dankudev` scope.
 
-Before publishing, make sure you are logged into an npm account with access to the `@danku` organization:
+Before publishing, make sure you are logged into an npm account with access to the `@dankudev` organization:
 
 ```bash
 npm whoami
