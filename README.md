@@ -29,12 +29,13 @@ danku new sveltekit my-app
 The `new sveltekit` command mirrors the original Danku CLI flow, but uses CLI options with
 environment-variable fallbacks instead of a `.danku` config file:
 
-- creates a private GitHub repository
+- generates Pulumi code that can create/manage the GitHub repository
 - runs `pnpm dlx sv create` with Danku's SvelteKit defaults
 - adds ESLint, Playwright, Prettier, Tailwind CSS, and Vitest via `sv add`
 - copies Danku boilerplate from this package's `templates` directory
 - optionally applies `marketing` or `saas-fs` boilerplate
-- configures Cloudflare Workers, D1, GitHub variables/secrets, and deploy workflow when configured
+- generates `infra/pulumi` for Cloudflare, GitHub, PostHog, and Creem infrastructure
+- configures Cloudflare Workers adapter and a Pulumi-backed deployment workflow when configured
 
 Provider and target selection:
 
@@ -52,8 +53,8 @@ Non-secret IDs can be passed as options or read from env:
 | Option                         | Environment fallback               |
 | ------------------------------ | ---------------------------------- |
 | `--cloudflare-account-id`      | `DANKU_CLOUDFLARE_ACCOUNT_ID`      |
-| `--cloudflare-zone-id`         | `DANKU_CLOUDFLARE_ZONE_ID`         |
-| `--posthog-api-key`            | `DANKU_POSTHOG_API_KEY`            |
+| `--domain`                     | `DANKU_DOMAIN`                     |
+| `--posthog-organization-id`    | `DANKU_POSTHOG_ORGANIZATION_ID`    |
 | `--stripe-publishable-key`     | `DANKU_STRIPE_PUBLISHABLE_KEY`     |
 | `--stripe-publishable-key-dev` | `DANKU_STRIPE_PUBLISHABLE_KEY_DEV` |
 
@@ -61,8 +62,6 @@ Secrets are env-only:
 
 | Secret                        | Environment variable          |
 | ----------------------------- | ----------------------------- |
-| GitHub token                  | `DANKU_GITHUB_TOKEN`          |
-| Cloudflare API token          | `DANKU_CLOUDFLARE_API_TOKEN`  |
 | Stripe production secret key  | `DANKU_STRIPE_SECRET_KEY`     |
 | Stripe development secret key | `DANKU_STRIPE_SECRET_KEY_DEV` |
 | Stripe webhook secret         | `DANKU_STRIPE_WEBHOOK_SECRET` |
@@ -70,11 +69,23 @@ Secrets are env-only:
 Example:
 
 ```bash
-DANKU_GITHUB_TOKEN=... \
 DANKU_CLOUDFLARE_ACCOUNT_ID=... \
-DANKU_CLOUDFLARE_API_TOKEN=... \
-DANKU_CLOUDFLARE_ZONE_ID=... \
+DANKU_DOMAIN=example.com \
 danku new sveltekit my-app
+```
+
+After generation, configure provider secrets in `infra/pulumi` before running Pulumi.
+The CLI does not call GitHub, Cloudflare, PostHog, or Creem APIs directly; Pulumi owns those operations:
+
+```bash
+cd my-app/infra/pulumi
+pnpm install
+pulumi stack init dev
+pulumi config set cloudflare:apiToken --secret
+pulumi config set github:token --secret
+pulumi config set posthog:apiKey --secret
+export CREEM_API_KEY=...
+pulumi preview
 ```
 
 ## Development

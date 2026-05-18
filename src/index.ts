@@ -47,16 +47,18 @@ const cloudflareAccountIdOption = Options.text("cloudflare-account-id").pipe(
 	Options.withDescription("Cloudflare account ID. Falls back to DANKU_CLOUDFLARE_ACCOUNT_ID.")
 );
 
-const cloudflareZoneIdOption = Options.text("cloudflare-zone-id").pipe(
-	Options.withFallbackConfig(Config.string("DANKU_CLOUDFLARE_ZONE_ID")),
+const domainOption = Options.text("domain").pipe(
+	Options.withFallbackConfig(Config.string("DANKU_DOMAIN")),
 	Options.optional,
-	Options.withDescription("Cloudflare zone ID. Falls back to DANKU_CLOUDFLARE_ZONE_ID.")
+	Options.withDescription(
+		"Root domain Pulumi will manage in Cloudflare. Falls back to DANKU_DOMAIN."
+	)
 );
 
-const postHogApiKeyOption = Options.text("posthog-api-key").pipe(
-	Options.withFallbackConfig(Config.string("DANKU_POSTHOG_API_KEY")),
+const postHogOrganizationIdOption = Options.text("posthog-organization-id").pipe(
+	Options.withFallbackConfig(Config.string("DANKU_POSTHOG_ORGANIZATION_ID")),
 	Options.optional,
-	Options.withDescription("PostHog public API key. Falls back to DANKU_POSTHOG_API_KEY.")
+	Options.withDescription("PostHog organization ID. Falls back to DANKU_POSTHOG_ORGANIZATION_ID.")
 );
 
 const stripePublishableKeyOption = Options.text("stripe-publishable-key").pipe(
@@ -78,12 +80,12 @@ const stripePublishableKeyDevOption = Options.text("stripe-publishable-key-dev")
 type NewCommandInput = {
 	boilerplate: "default" | "marketing" | "saas-fs";
 	cloudflareAccountId: Option.Option<string>;
-	cloudflareZoneId: Option.Option<string>;
 	deploymentTarget: "cloudflare" | "none";
+	domain: Option.Option<string>;
 	dryRun: boolean;
 	gitProvider: "github" | "none";
 	packageManager: "pnpm" | "npm" | "yarn";
-	postHogApiKey: Option.Option<string>;
+	postHogOrganizationId: Option.Option<string>;
 	projectName: string;
 	stripePublishableKey: Option.Option<string>;
 	stripePublishableKeyDev: Option.Option<string>;
@@ -91,8 +93,6 @@ type NewCommandInput = {
 };
 
 type EnvSecrets = {
-	cloudflareToken: string | undefined;
-	githubToken: string | undefined;
 	stripeSecretKey: string | undefined;
 	stripeSecretKeyDev: string | undefined;
 	stripeWebhookSecret: string | undefined;
@@ -136,8 +136,6 @@ const optionalSecret = (envName: string) =>
 	);
 
 const readEnvSecrets = Effect.all({
-	cloudflareToken: optionalSecret("DANKU_CLOUDFLARE_API_TOKEN"),
-	githubToken: optionalSecret("DANKU_GITHUB_TOKEN"),
 	stripeSecretKey: optionalSecret("DANKU_STRIPE_SECRET_KEY"),
 	stripeSecretKeyDev: optionalSecret("DANKU_STRIPE_SECRET_KEY_DEV"),
 	stripeWebhookSecret: optionalSecret("DANKU_STRIPE_WEBHOOK_SECRET")
@@ -150,12 +148,10 @@ const buildGeneratorConfig = (input: NewCommandInput, secrets: EnvSecrets): Gene
 		gitProvider: {}
 	};
 	const cloudflareAccountId = unwrapText(input.cloudflareAccountId);
-	const cloudflareZoneId = unwrapText(input.cloudflareZoneId);
+	const domain = unwrapText(input.domain);
 
 	if (input.gitProvider === "github") {
-		generatorConfig.gitProvider.gitHub = {
-			token: requireOption(secrets.githubToken, "Missing GitHub token. Set DANKU_GITHUB_TOKEN.")
-		};
+		generatorConfig.gitProvider.gitHub = {};
 	}
 
 	if (input.deploymentTarget === "cloudflare") {
@@ -164,31 +160,24 @@ const buildGeneratorConfig = (input: NewCommandInput, secrets: EnvSecrets): Gene
 				cloudflareAccountId,
 				"Missing Cloudflare account ID. Pass --cloudflare-account-id or set DANKU_CLOUDFLARE_ACCOUNT_ID."
 			),
-			token: requireOption(
-				secrets.cloudflareToken,
-				"Missing Cloudflare API token. Set DANKU_CLOUDFLARE_API_TOKEN."
-			),
-			zoneId: requireOption(
-				cloudflareZoneId,
-				"Missing Cloudflare zone ID. Pass --cloudflare-zone-id or set DANKU_CLOUDFLARE_ZONE_ID."
-			)
+			domain: requireOption(domain, "Missing domain. Pass --domain or set DANKU_DOMAIN.")
 		};
 	}
 
 	if (input.boilerplate === "marketing") {
 		generatorConfig.boilerplate.marketing = {
-			postHogApiKey: requireOption(
-				unwrapText(input.postHogApiKey),
-				"Missing PostHog API key. Pass --posthog-api-key or set DANKU_POSTHOG_API_KEY."
+			postHogOrganizationId: requireOption(
+				unwrapText(input.postHogOrganizationId),
+				"Missing PostHog organization ID. Pass --posthog-organization-id or set DANKU_POSTHOG_ORGANIZATION_ID."
 			)
 		};
 	}
 
 	if (input.boilerplate === "saas-fs") {
 		generatorConfig.boilerplate.saasFs = {
-			postHogApiKey: requireOption(
-				unwrapText(input.postHogApiKey),
-				"Missing PostHog API key. Pass --posthog-api-key or set DANKU_POSTHOG_API_KEY."
+			postHogOrganizationId: requireOption(
+				unwrapText(input.postHogOrganizationId),
+				"Missing PostHog organization ID. Pass --posthog-organization-id or set DANKU_POSTHOG_ORGANIZATION_ID."
 			),
 			stripePublishableKey: requireOption(
 				unwrapText(input.stripePublishableKey),
@@ -225,13 +214,13 @@ const newCommand = Command.make(
 	{
 		boilerplate: boilerplateOption,
 		cloudflareAccountId: cloudflareAccountIdOption,
-		cloudflareZoneId: cloudflareZoneIdOption,
 		deploymentTarget: deploymentTargetOption,
+		domain: domainOption,
 		template: templateArg,
 		projectName: projectNameArg,
 		gitProvider: gitProviderOption,
 		packageManager: packageManagerOption,
-		postHogApiKey: postHogApiKeyOption,
+		postHogOrganizationId: postHogOrganizationIdOption,
 		dryRun: dryRunOption,
 		stripePublishableKey: stripePublishableKeyOption,
 		stripePublishableKeyDev: stripePublishableKeyDevOption

@@ -1,10 +1,10 @@
 export type Config = {
 	boilerplate: {
 		marketing?: {
-			postHogApiKey: string;
+			postHogOrganizationId: string;
 		};
 		saasFs?: {
-			postHogApiKey: string;
+			postHogOrganizationId: string;
 			stripePublishableKey: string;
 			stripePublishableKeyDev: string;
 			stripeSecretKey: string;
@@ -15,13 +15,10 @@ export type Config = {
 	deploymentTarget: {
 		cloudflare?: {
 			accountId: string;
-			token: string;
-			zoneId: string;
+			domain: string;
 		};
 	};
 	gitProvider: {
-		gitHub?: {
-			token: string;
-		};
+		gitHub?: Record<string, never>;
 	};
 };
