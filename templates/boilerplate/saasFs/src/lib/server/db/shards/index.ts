@@ -7,7 +7,7 @@ const shardDbInstances = new Map<number, DrizzleD1Database>();
 
 export function getOrCreateShardDb(env: Env, shardNumber: number): DrizzleD1Database {
 	if (maxShardNumber === null) {
-		maxShardNumber = Object.keys(env as Record<string, unknown>).reduce((currentMax, key) => {
+		maxShardNumber = Object.keys(env as unknown as Record<string, unknown>).reduce((currentMax, key) => {
 			const match = SHARD_BINDING_NAME_PATTERN.exec(key);
 
 			if (!match) {
@@ -35,7 +35,7 @@ export function getOrCreateShardDb(env: Env, shardNumber: number): DrizzleD1Data
 	}
 
 	const shardBindingName = `DB_S${shardNumber.toString().padStart(2, "0")}`;
-	const shardBinding = (env as Record<string, unknown>)[shardBindingName];
+	const shardBinding = (env as unknown as Record<string, unknown>)[shardBindingName];
 
 	if (!shardBinding) {
 		throw new Error(`Shard binding "${shardBindingName}" was not found in the Cloudflare env.`);

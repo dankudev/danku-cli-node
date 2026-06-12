@@ -29,7 +29,7 @@ const createAuth = (db: DrizzleD1Database) =>
 						return {
 							data: {
 								...user,
-								shardId: getLeastLoadedShardNumber(getRequestEvent().platform!.env)
+								shardId: getLeastLoadedShardNumber(getRequestEvent().platform!.env as Env)
 							}
 						};
 					}

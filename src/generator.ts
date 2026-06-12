@@ -20,7 +20,7 @@ type CommandOptions = SpawnOptions & {
 	optional?: boolean;
 };
 
-type JsonValue = boolean | null | number | Record<string, unknown> | string | string[];
+type JsonValue = boolean | null | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 type JsonPath = Array<number | string>;
 
@@ -114,17 +114,35 @@ class DankuGenerator {
 			"--cwd",
 			projectName
 		]);
-		await this.modifyJsonFile(
-			"wrangler.jsonc",
-			[
-				{ path: ["name"], value: projectName },
-				{ path: ["compatibility_date"], value: new Date().toISOString().slice(0, 10) },
-				{ path: ["compatibility_flags"], value: ["nodejs_compat"] },
-				{ path: ["workers_dev"], value: false }
-			],
-			2,
-			projectName
-		);
+		const wranglerJsonEdits: JsonEdit[] = [
+			{ path: ["name"], value: projectName },
+			{ path: ["compatibility_date"], value: new Date().toISOString().slice(0, 10) },
+			{ path: ["compatibility_flags"], value: ["nodejs_compat"] },
+			{ path: ["workers_dev"], value: false }
+		];
+		if (config.boilerplate.saasFs) {
+			wranglerJsonEdits.push({
+				path: ["d1_databases"],
+				value: [
+					{
+						binding: "DB",
+						database_id: "local-main-database",
+						database_name: projectName
+					},
+					{
+						binding: "DB_S00",
+						database_id: "local-first-shard-database",
+						database_name: `${projectName}-s00`
+					},
+					{
+						binding: "DB_S01",
+						database_id: "local-second-shard-database",
+						database_name: `${projectName}-s01`
+					}
+				]
+			});
+		}
+		await this.modifyJsonFile("wrangler.jsonc", wranglerJsonEdits, 2, projectName);
 		await this.modifyJsonFile(
 			"package.json",
 			[
@@ -153,11 +171,18 @@ worker-configuration.d.ts`
 		);
 
 		if (config.gitProvider.gitHub) {
-			await this.writePulumiDeployWorkflow(config, projectName);
+			await this.writeAlchemyDeployWorkflow(config, projectName);
 		}
 
-		await this.executeCommand("pnpm", ["add", "-D", "wrangler"], { cwd: projectName });
-		await this.generatePulumiProject(config, projectName);
+		await this.executeCommand(
+			"pnpm",
+			["add", "-D", "@sveltejs/adapter-cloudflare", "alchemy", "wrangler"],
+			{
+				cwd: projectName
+			}
+		);
+		await this.useAlchemySvelteKitAdapter(projectName);
+		await this.generateAlchemyProject(config, projectName);
 	}
 
 	private async addDefaultBoilerplate(projectName: string): Promise<void> {
@@ -189,14 +214,7 @@ worker-configuration.d.ts`
 			join(process.cwd(), projectName, "src", "routes", "+layout.ts"),
 			`https://a.${this.domain.hostname}`
 		);
-		await this.replaceInFile(
-			join(process.cwd(), projectName, "svelte.config.js"),
-			"adapter: adapter()",
-			`adapter: adapter(),
-		paths: {
-			relative: false
-		}`
-		);
+		await this.disableRelativeSvelteKitPaths(projectName);
 		await this.executeCommand("pnpm", ["add", "-D", "posthog-js"], { cwd: projectName });
 	}
 
@@ -448,43 +466,116 @@ worker-configuration.d.ts`
 		}
 	}
 
-	private async generatePulumiProject(config: Config, projectName: string): Promise<void> {
+	private async svelteKitConfigPath(projectName: string): Promise<string> {
+		const projectPath = join(process.cwd(), projectName);
+		const svelteConfigPath = join(projectPath, "svelte.config.js");
+		return (await pathExists(svelteConfigPath))
+			? svelteConfigPath
+			: join(projectPath, "vite.config.ts");
+	}
+
+	private async disableRelativeSvelteKitPaths(projectName: string): Promise<void> {
+		const configPath = await this.svelteKitConfigPath(projectName);
+		const config = await fs.readFile(configPath, "utf8");
+		const transformConfig = transforms.text(({ content }) =>
+			content.replace(
+				"adapter: adapter()",
+				`adapter: adapter(),
+			paths: {
+				relative: false
+			}`
+			)
+		);
+		await fs.writeFile(configPath, transformConfig(config), "utf8");
+	}
+
+	private async useAlchemySvelteKitAdapter(projectName: string): Promise<void> {
+		const svelteConfigPath = await this.svelteKitConfigPath(projectName);
+		const svelteConfig = await fs.readFile(svelteConfigPath, "utf8");
+		const transformConfig = transforms.text(({ content }) =>
+			content
+				.replace(
+					/from ['"]@sveltejs\/adapter-(auto|cloudflare)['"];/,
+					'from "alchemy/cloudflare/sveltekit";'
+				)
+				.replace(
+					"adapter: adapter()",
+					`adapter: adapter({
+				platformProxy: {
+					configPath: "wrangler.jsonc"
+				}
+			})`
+				)
+		);
+		await fs.writeFile(svelteConfigPath, transformConfig(svelteConfig), "utf8");
+	}
+
+	private async generateAlchemyProject(config: Config, projectName: string): Promise<void> {
 		const cloudflareConfig = config.deploymentTarget.cloudflare;
 		if (!cloudflareConfig) return;
 
-		const pulumiPath = join(process.cwd(), projectName, "infra", "pulumi");
-		const sourcePath = join(pulumiPath, "src");
-		await fs.mkdir(sourcePath, { recursive: true });
+		const alchemyPath = join(process.cwd(), projectName, "infra", "alchemy");
+		await this.copyTemplateFiles("infra/alchemy", projectName);
 
 		await Promise.all([
 			fs.writeFile(
-				join(pulumiPath, "Pulumi.yaml"),
-				`name: ${projectName}
-description: Pulumi-managed Danku infrastructure
-runtime:
-  name: nodejs
-  options:
-    packagemanager: pnpm
-config:
-  pulumi:tags:
-    value:
-      pulumi:template: typescript
-`,
+				join(process.cwd(), projectName, "alchemy.run.ts"),
+				alchemyRunTs(config, projectName),
 				"utf8"
 			),
-			fs.writeFile(join(pulumiPath, "package.json"), pulumiPackageJson(projectName), "utf8"),
-			fs.writeFile(join(pulumiPath, "tsconfig.json"), pulumiTsConfig(), "utf8"),
-			fs.writeFile(join(pulumiPath, "README.md"), pulumiReadme(projectName), "utf8"),
-			fs.writeFile(join(sourcePath, "config.ts"), pulumiConfigTs(), "utf8"),
-			fs.writeFile(join(sourcePath, "cloudflare.ts"), pulumiCloudflareTs(config), "utf8"),
-			fs.writeFile(join(sourcePath, "github.ts"), pulumiGithubTs(config, projectName), "utf8"),
-			fs.writeFile(join(sourcePath, "posthog.ts"), pulumiPostHogTs(config, projectName), "utf8"),
-			fs.writeFile(join(sourcePath, "creem.ts"), pulumiCreemTs(projectName), "utf8"),
-			fs.writeFile(join(sourcePath, "index.ts"), pulumiIndexTs(config), "utf8")
+			fs.writeFile(join(alchemyPath, "README.md"), alchemyReadme(projectName), "utf8"),
+			fs.writeFile(
+				join(process.cwd(), projectName, "tsconfig.alchemy.json"),
+				alchemyTsConfig(),
+				"utf8"
+			),
+			this.modifyJsonFile(
+				"package.json",
+				[
+					{ path: ["scripts", "dev"], value: "alchemy dev" },
+					{ path: ["scripts", "dev:vite"], value: "vite dev" },
+					{ path: ["scripts", "infra:check"], value: "tsc --noEmit -p tsconfig.alchemy.json" },
+					{ path: ["scripts", "infra:read"], value: "alchemy run --read --stage prod" },
+					{ path: ["scripts", "infra:deploy"], value: "alchemy deploy --stage prod" },
+					{ path: ["scripts", "infra:destroy"], value: "alchemy destroy" }
+				],
+				4,
+				projectName
+			),
+			this.replaceInFile(
+				join(process.cwd(), projectName, ".gitignore"),
+				"node_modules",
+				`node_modules
+
+.alchemy`
+			)
 		]);
 	}
 
-	private async writePulumiDeployWorkflow(config: Config, projectName: string): Promise<void> {
+	private async writeAlchemyDeployWorkflow(config: Config, projectName: string): Promise<void> {
+		const buildStep: WorkflowStep = {
+			name: "Build project",
+			run: "pnpm run build"
+		};
+
+		if (config.boilerplate.marketing) {
+			buildStep.env = {
+				PUBLIC_ORIGIN: "${{ vars.ORIGIN }}",
+				PUBLIC_POSTHOG_API_KEY: "${{ vars.POSTHOG_API_KEY }}"
+			};
+		}
+
+		if (config.boilerplate.saasFs) {
+			buildStep.env = {
+				AUTH_SECRET: "${{ secrets.AUTH_SECRET }}",
+				PUBLIC_ORIGIN: "${{ vars.ORIGIN }}",
+				PUBLIC_POSTHOG_API_KEY: "${{ vars.POSTHOG_API_KEY }}",
+				PUBLIC_STRIPE_PUBLISHABLE_KEY: "${{ vars.STRIPE_PUBLISHABLE_KEY }}",
+				STRIPE_SECRET_KEY: "${{ secrets.STRIPE_SECRET_KEY }}",
+				STRIPE_WEBHOOK_SECRET: "${{ secrets.STRIPE_WEBHOOK_SECRET }}"
+			};
+		}
+
 		const steps: WorkflowStep[] = [
 			{ name: "Checkout", uses: "actions/checkout@v6" },
 			{
@@ -502,55 +593,28 @@ config:
 			},
 			{ name: "Install dependencies", run: "pnpm install" },
 			{
-				name: "Install Pulumi dependencies",
-				run: "pnpm install",
-				"working-directory": "infra/pulumi"
+				name: "Check Alchemy program",
+				run: "pnpm run infra:check"
 			},
+			buildStep,
 			{
-				name: "Pulumi preview",
-				run: "pnpm --dir infra/pulumi exec pulumi preview --stack prod --non-interactive",
+				name: "Alchemy read",
+				run: "pnpm run infra:read",
 				env: {
-					PULUMI_ACCESS_TOKEN: "${{ secrets.PULUMI_ACCESS_TOKEN }}"
+					ALCHEMY_PASSWORD: "${{ secrets.ALCHEMY_PASSWORD }}"
 				}
 			},
 			{
-				name: "Pulumi up",
-				run: "pnpm --dir infra/pulumi exec pulumi up --stack prod --yes --non-interactive",
+				name: "Alchemy deploy",
+				run: "pnpm run infra:deploy",
 				env: {
-					PULUMI_ACCESS_TOKEN: "${{ secrets.PULUMI_ACCESS_TOKEN }}"
+					ALCHEMY_PASSWORD: "${{ secrets.ALCHEMY_PASSWORD }}"
 				}
-			},
-			{ name: "Build project", run: "pnpm run build" }
+			}
 		];
 
-		if (config.boilerplate.marketing) {
-			steps[7] = {
-				env: {
-					PUBLIC_ORIGIN: "${{ vars.ORIGIN }}",
-					PUBLIC_POSTHOG_API_KEY: "${{ vars.POSTHOG_API_KEY }}"
-				},
-				name: "Build project",
-				run: "pnpm run build"
-			};
-		}
-
-		if (config.boilerplate.saasFs) {
-			steps[7] = {
-				env: {
-					AUTH_SECRET: "${{ secrets.AUTH_SECRET }}",
-					PUBLIC_ORIGIN: "${{ vars.ORIGIN }}",
-					PUBLIC_POSTHOG_API_KEY: "${{ vars.POSTHOG_API_KEY }}",
-					PUBLIC_STRIPE_PUBLISHABLE_KEY: "${{ vars.STRIPE_PUBLISHABLE_KEY }}",
-					STRIPE_SECRET_KEY: "${{ secrets.STRIPE_SECRET_KEY }}",
-					STRIPE_WEBHOOK_SECRET: "${{ secrets.STRIPE_WEBHOOK_SECRET }}"
-				},
-				name: "Build project",
-				run: "pnpm run build"
-			};
-		}
-
 		const workflow = {
-			name: "Deploy with Pulumi",
+			name: "Deploy with Alchemy",
 			on: { push: { branches: ["main"] } },
 			jobs: {
 				"preview-provision-and-deploy": {
@@ -564,7 +628,7 @@ config:
 		const yamlString = stringify(workflow, { lineWidth: -1 });
 		const gitHubWorkflowsPath = join(process.cwd(), projectName, ".github", "workflows");
 		await fs.mkdir(gitHubWorkflowsPath, { recursive: true });
-		await fs.writeFile(join(gitHubWorkflowsPath, "deploy-with-pulumi.yml"), yamlString, "utf8");
+		await fs.writeFile(join(gitHubWorkflowsPath, "deploy-with-alchemy.yml"), yamlString, "utf8");
 	}
 
 	private async updateEnvFile(repositoryName: string, key: string, value: string): Promise<void> {
@@ -597,35 +661,7 @@ config:
 	}
 }
 
-function pulumiPackageJson(projectName: string): string {
-	return `${JSON.stringify(
-		{
-			name: `${projectName}-infra`,
-			private: true,
-			type: "module",
-			scripts: {
-				preview: "pulumi preview",
-				up: "pulumi up",
-				check: "tsc --noEmit"
-			},
-			dependencies: {
-				"@pulumi/cloudflare": "^6.15.0",
-				"@pulumi/github": "^6.13.1",
-				"@pulumi/pulumi": "^3.207.0",
-				"pulumi-posthog": "^1.0.6"
-			},
-			devDependencies: {
-				"@types/node": "^24.12.0",
-				typescript: "^5.9.3"
-			}
-		},
-		null,
-		2
-	)}
-`;
-}
-
-function pulumiTsConfig(): string {
+function alchemyTsConfig(): string {
 	return `${JSON.stringify(
 		{
 			compilerOptions: {
@@ -637,7 +673,7 @@ function pulumiTsConfig(): string {
 				skipLibCheck: true,
 				forceConsistentCasingInFileNames: true
 			},
-			include: ["src/**/*.ts"]
+			include: ["alchemy.run.ts", "infra/alchemy/**/*.ts"]
 		},
 		null,
 		2
@@ -645,419 +681,378 @@ function pulumiTsConfig(): string {
 `;
 }
 
-function pulumiReadme(projectName: string): string {
+function alchemyReadme(projectName: string): string {
 	return `# ${projectName} infrastructure
 
-Pulumi owns durable infrastructure for this Danku project:
+Alchemy owns durable infrastructure for this Danku project:
 
-- Cloudflare zone, DNS, Worker routing, and D1 databases
+- Cloudflare zone, DNS records, SvelteKit Worker deployment, and D1 databases
 - GitHub repository, Actions variables, Actions secrets, and production environment secrets
-- PostHog projects via the Terraform-bridged \`pulumi-posthog\` provider
-- Creem products via a Pulumi dynamic provider skeleton
+- PostHog project and feature flag through a generated custom Alchemy resource
+- Creem product through a generated custom Alchemy resource
 
 ## First run
 
 \`\`\`sh
-cd infra/pulumi
 pnpm install
-pulumi stack init dev
-pulumi config set danku:appName ${projectName}
-pulumi config set danku:cloudflareAccountId <cloudflare-account-id>
-pulumi config set danku:domain ${projectName}.example.com
-pulumi config set danku:githubOwner <github-owner>
-pulumi config set danku:posthogOrganizationId <posthog-org-id>
-pulumi config set cloudflare:apiToken --secret
-pulumi config set github:token --secret
-pulumi config set posthog:apiKey --secret
+export ALCHEMY_PASSWORD=<state-secret-password>
+export CLOUDFLARE_ACCOUNT_ID=<cloudflare-account-id>
+export CLOUDFLARE_API_TOKEN=<cloudflare-api-token>
+export GITHUB_OWNER=<github-owner>
+export GITHUB_TOKEN=<github-token>
+export POSTHOG_API_KEY=<posthog-personal-api-key>
+export POSTHOG_ORGANIZATION_ID=<posthog-org-id>
 export CREEM_API_KEY=...
-pulumi preview
-pulumi up
+pnpm run infra:read
+pnpm run infra:deploy
 \`\`\`
 
+Use \`pnpm run dev\` to run \`alchemy dev\` with Miniflare-backed local Cloudflare bindings.
 Cloudflare zone creation outputs assigned nameservers. Point the domain at those nameservers at your registrar before relying on DNS routing.
 `;
 }
 
-function pulumiConfigTs(): string {
-	return `import * as pulumi from "@pulumi/pulumi";
+function alchemyRunTs(config: Config, projectName: string): string {
+	const cloudflareConfig = config.deploymentTarget.cloudflare;
+	if (!cloudflareConfig) return "";
 
-const danku = new pulumi.Config("danku");
-const cloudflare = new pulumi.Config("cloudflare");
-const github = new pulumi.Config("github");
-const posthog = new pulumi.Config("posthog");
+	const hasGitHub = config.gitProvider.gitHub !== undefined;
+	const hasPostHog =
+		config.boilerplate.marketing !== undefined || config.boilerplate.saasFs !== undefined;
+	const hasSaas = config.boilerplate.saasFs !== undefined;
+	const postHogOrganizationId =
+		config.boilerplate.marketing?.postHogOrganizationId ??
+		config.boilerplate.saasFs?.postHogOrganizationId ??
+		"REPLACE_WITH_POSTHOG_ORGANIZATION_ID";
+	const stripePublishableKey = config.boilerplate.saasFs?.stripePublishableKey ?? "";
 
-export const appName = danku.get("appName") ?? pulumi.getProject();
-export const cloudflareAccountId = danku.get("cloudflareAccountId") ?? "REPLACE_WITH_CLOUDFLARE_ACCOUNT_ID";
-export const cloudflareApiToken = cloudflare.requireSecret("apiToken");
-export const domain = danku.get("domain") ?? "REPLACE_WITH_DOMAIN";
-export const githubOwner = danku.get("githubOwner");
-export const githubToken = github.getSecret("token");
-export const posthogApiKey = posthog.getSecret("apiKey");
-export const posthogHost = posthog.get("host") ?? "https://us.posthog.com";
-export const posthogOrganizationId = danku.get("posthogOrganizationId") ?? "REPLACE_WITH_POSTHOG_ORGANIZATION_ID";
-export const stack = pulumi.getStack();
-`;
-}
+	const extraImports = [
+		hasGitHub
+			? 'import { GitHubSecret, RepositoryEnvironment } from "alchemy/github";\nimport { GitHubActionsVariable, GitHubRepository } from "./infra/alchemy/resources/github.js";'
+			: "",
+		hasPostHog
+			? 'import { PostHogFeatureFlag, PostHogProject } from "./infra/alchemy/resources/posthog.js";'
+			: "",
+		hasSaas ? 'import { CreemProduct } from "./infra/alchemy/resources/creem.js";' : ""
+	]
+		.filter(Boolean)
+		.join("\n");
 
-function pulumiCloudflareTs(config: Config): string {
-	const d1Resources = config.boilerplate.saasFs
+	const d1Resources = hasSaas
 		? `
-const mainDatabase = new cloudflare.D1Database("main-database", {
-	accountId: cloudflareAccountId,
-	name: appName
+const mainDatabase = await D1Database("main-database", {
+	...cloudflare,
+	adopt: true,
+	name: resourceName(appName)
 });
-const firstShardDatabase = new cloudflare.D1Database("first-shard-database", {
-	accountId: cloudflareAccountId,
-	name: \`\${appName}-s00\`
+const firstShardDatabase = await D1Database("first-shard-database", {
+	...cloudflare,
+	adopt: true,
+	name: resourceName(\`\${appName}-s00\`)
 });
-const secondShardDatabase = new cloudflare.D1Database("second-shard-database", {
-	accountId: cloudflareAccountId,
-	name: \`\${appName}-s01\`
+const secondShardDatabase = await D1Database("second-shard-database", {
+	...cloudflare,
+	adopt: true,
+	name: resourceName(\`\${appName}-s01\`)
 });
 `
 		: "";
 
-	const d1Bindings = config.boilerplate.saasFs
-		? `,
-	{
-		name: "DB",
-		type: "d1",
-		id: mainDatabase.uuid
-	},
-	{
-		name: "DB_S00",
-		type: "d1",
-		id: firstShardDatabase.uuid
-	},
-	{
-		name: "DB_S01",
-		type: "d1",
-		id: secondShardDatabase.uuid
-	}`
+	const d1Bindings = hasSaas
+		? `
+	DB: mainDatabase,
+	DB_S00: firstShardDatabase,
+	DB_S01: secondShardDatabase`
 		: "";
 
-	return `import * as cloudflare from "@pulumi/cloudflare";
-import * as pulumi from "@pulumi/pulumi";
+	const buildEnv = [
+		"PUBLIC_ORIGIN: origin",
+		hasPostHog ? 'PUBLIC_POSTHOG_API_KEY: posthogProjectApiToken ?? ""' : "",
+		hasSaas
+			? `PUBLIC_STRIPE_PUBLISHABLE_KEY: env("STRIPE_PUBLISHABLE_KEY", "DANKU_STRIPE_PUBLISHABLE_KEY", "${stripePublishableKey}")`
+			: ""
+	]
+		.filter(Boolean)
+		.join(",\n\t");
 
-import {
-	appName,
-	cloudflareAccountId,
-	cloudflareApiToken,
-	domain,
-	stack
-} from "./config.js";
+	const githubResources = hasGitHub
+		? `
+if (provisionExternalServices) {
+	const githubOwner = requiredEnv("GITHUB_OWNER", "DANKU_GITHUB_OWNER");
+	const githubToken = secretEnv("GITHUB_TOKEN", "DANKU_GITHUB_TOKEN");
+	process.env.GITHUB_TOKEN ??= process.env.DANKU_GITHUB_TOKEN;
 
-const provider = new cloudflare.Provider("cloudflare-provider", {
-	apiToken: cloudflareApiToken
+	const repository = await GitHubRepository("repository", {
+		adopt: true,
+		autoInit: false,
+		delete: false,
+		hasIssues: true,
+		hasProjects: true,
+		hasWiki: false,
+		name: "${projectName}",
+		owner: githubOwner,
+		token: githubToken,
+		visibility: "private"
+	});
+
+	await RepositoryEnvironment("production-environment", {
+		name: "Production",
+		owner: githubOwner,
+		repository: repository.name
+	});
+
+	await Promise.all([
+		GitHubSecret("cloudflare-api-token", {
+			owner: githubOwner,
+			repository: repository.name,
+			name: "CLOUDFLARE_API_TOKEN",
+			value: cloudflareApiToken,
+			token: githubToken
+		}),
+		GitHubSecret("production-cloudflare-api-token", {
+			owner: githubOwner,
+			repository: repository.name,
+			environment: "Production",
+			name: "CLOUDFLARE_API_TOKEN",
+			value: cloudflareApiToken,
+			token: githubToken
+		}),
+		GitHubActionsVariable("cloudflare-account-id", {
+			owner: githubOwner,
+			repository: repository.name,
+			name: "CLOUDFLARE_ACCOUNT_ID",
+			value: cloudflareAccountId,
+			token: githubToken
+		}),
+		GitHubActionsVariable("origin", {
+			owner: githubOwner,
+			repository: repository.name,
+			environment: "Production",
+			name: "ORIGIN",
+			value: origin,
+			token: githubToken
+		})${
+			hasPostHog
+				? `,
+		GitHubActionsVariable("posthog-api-key", {
+			owner: githubOwner,
+			repository: repository.name,
+			environment: "Production",
+			name: "POSTHOG_API_KEY",
+			value: posthogProjectApiToken ?? "",
+			token: githubToken
+		})`
+				: ""
+		}${
+			hasSaas
+				? `,
+		GitHubActionsVariable("stripe-publishable-key", {
+			owner: githubOwner,
+			repository: repository.name,
+			environment: "Production",
+			name: "STRIPE_PUBLISHABLE_KEY",
+			value: env("STRIPE_PUBLISHABLE_KEY", "DANKU_STRIPE_PUBLISHABLE_KEY", "${stripePublishableKey}"),
+			token: githubToken
+		}),
+		GitHubSecret("auth-secret", {
+			owner: githubOwner,
+			repository: repository.name,
+			environment: "Production",
+			name: "AUTH_SECRET",
+			value: secretEnv("AUTH_SECRET", "DANKU_AUTH_SECRET"),
+			token: githubToken
+		}),
+		GitHubSecret("stripe-secret-key", {
+			owner: githubOwner,
+			repository: repository.name,
+			environment: "Production",
+			name: "STRIPE_SECRET_KEY",
+			value: secretEnv("STRIPE_SECRET_KEY", "DANKU_STRIPE_SECRET_KEY"),
+			token: githubToken
+		}),
+		GitHubSecret("stripe-webhook-secret", {
+			owner: githubOwner,
+			repository: repository.name,
+			environment: "Production",
+			name: "STRIPE_WEBHOOK_SECRET",
+			value: secretEnv("STRIPE_WEBHOOK_SECRET", "DANKU_STRIPE_WEBHOOK_SECRET"),
+			token: githubToken
+		})`
+				: ""
+		}
+	]);
+
+	console.log({
+		repositoryCloneUrl: repository.cloneUrl,
+		repositoryName: repository.name
+	});
+}
+`
+		: "";
+
+	const posthogResources = hasPostHog
+		? `
+let posthogProjectApiToken: string | undefined;
+let posthogProjectId: string | undefined;
+
+if (provisionExternalServices) {
+	const posthogProject = await PostHogProject("posthog-project", {
+		apiKey: secretEnv("POSTHOG_API_KEY", "DANKU_POSTHOG_PERSONAL_API_KEY"),
+		host: env("POSTHOG_HOST", "DANKU_POSTHOG_HOST", "https://us.posthog.com"),
+		name: resourceName(appName),
+		organizationId: env("POSTHOG_ORGANIZATION_ID", "DANKU_POSTHOG_ORGANIZATION_ID", "${postHogOrganizationId}"),
+		timezone: "UTC"
+	});
+
+	await PostHogFeatureFlag("new-onboarding", {
+		active: false,
+		apiKey: secretEnv("POSTHOG_API_KEY", "DANKU_POSTHOG_PERSONAL_API_KEY"),
+		host: env("POSTHOG_HOST", "DANKU_POSTHOG_HOST", "https://us.posthog.com"),
+		key: "new-onboarding",
+		name: "New onboarding",
+		projectId: posthogProject.projectId,
+		rolloutPercentage: 0
+	});
+
+	posthogProjectApiToken = posthogProject.apiToken;
+	posthogProjectId = posthogProject.projectId;
+}
+`
+		: `const posthogProjectApiToken = undefined;
+const posthogProjectId = undefined;
+`;
+
+	const creemResources = hasSaas
+		? `
+let creemProMonthlyProductId: string | undefined;
+
+if (provisionExternalServices) {
+	const proMonthly = await CreemProduct("pro-monthly-product", {
+		apiKey: secretEnv("CREEM_API_KEY", "DANKU_CREEM_API_KEY"),
+		billingPeriod: "monthly",
+		billingType: "recurring",
+		currency: "USD",
+		name: "${projectName} Pro Monthly",
+		price: 1900,
+		testMode: app.stage !== "prod"
+	});
+
+	creemProMonthlyProductId = proMonthly.productId;
+}
+`
+		: "const creemProMonthlyProductId = undefined;\n";
+
+	return `import alchemy from "alchemy";
+import { D1Database, DnsRecords, SvelteKit, Zone } from "alchemy/cloudflare";
+${extraImports}
+
+const app = await alchemy("${projectName}", {
+	password: process.env.ALCHEMY_PASSWORD ?? process.env.PASSWORD
 });
 
-const zone = new cloudflare.Zone("zone", {
-	account: { id: cloudflareAccountId },
+const appName = env("DANKU_APP_NAME", undefined, "${projectName}");
+const cloudflareAccountId = env("CLOUDFLARE_ACCOUNT_ID", "DANKU_CLOUDFLARE_ACCOUNT_ID", "${cloudflareConfig.accountId}");
+const cloudflareApiToken = secretEnv("CLOUDFLARE_API_TOKEN", "DANKU_CLOUDFLARE_API_TOKEN");
+const cloudflare = {
+	accountId: cloudflareAccountId,
+	apiToken: cloudflareApiToken
+};
+const domain = env("DOMAIN", "DANKU_DOMAIN", "${cloudflareConfig.domain}");
+const origin = \`https://\${domain}\`;
+const provisionExternalServices = !app.local;
+
+const zone = await Zone("zone", {
+	...cloudflare,
+	delete: false,
+	jumpStart: true,
 	name: domain,
 	type: "full"
-}, { provider });
-
-const worker = new cloudflare.Worker("worker", {
-	accountId: cloudflareAccountId,
-	name: appName,
-	observability: { enabled: true }
-}, { provider });
+});
 ${d1Resources}
-const workerVersion = new cloudflare.WorkerVersion("worker-version", {
-	accountId: cloudflareAccountId,
-	workerId: worker.id,
-	assets: {
-		directory: "../../.svelte-kit/cloudflare",
-		config: {
-			htmlHandling: "auto-trailing-slash",
-			notFoundHandling: "single-page-application",
-			runWorkerFirst: true
+await DnsRecords("posthog-ingestion-records", {
+	...cloudflare,
+	delete: false,
+	records: [{
+		content: "us.i.posthog.com",
+		name: \`a.\${domain}\`,
+		proxied: true,
+		ttl: 1,
+		type: "CNAME"
+	}],
+	zoneId: zone.id
+});
+${posthogResources}${creemResources}
+const website = await SvelteKit("website", {
+	...cloudflare,
+	adopt: true,
+	bindings: {${d1Bindings}
+	},
+	build: {
+		command: "pnpm run build",
+		env: {
+			${buildEnv}
+		},
+		memoize: process.env.CI ? false : {
+			patterns: ["src/**", "static/**", "svelte.config.js", "vite.config.ts", "package.json", "pnpm-lock.yaml"]
 		}
 	},
-	bindings: [{
-		name: "ASSETS",
-		type: "assets"
-	}${d1Bindings}],
+	compatibility: "node",
 	compatibilityDate: "${new Date().toISOString().slice(0, 10)}",
-	compatibilityFlags: ["nodejs_compat"],
-	mainModule: "_worker.js",
-	modules: [{
-		contentFile: "../../.svelte-kit/cloudflare/_worker.js",
-		contentType: "application/javascript+module",
-		name: "_worker.js"
-	}]
-}, { provider });
-
-new cloudflare.WorkersDeployment("worker-deployment", {
-	accountId: cloudflareAccountId,
-	scriptName: worker.name,
-	strategy: "percentage",
-	versions: [{
-		percentage: 100,
-		versionId: workerVersion.id
-	}]
-}, { provider });
-
-new cloudflare.WorkersRoute("apex-worker-route", {
-	zoneId: zone.id,
-	pattern: domain,
-	script: worker.name
-}, { provider });
-
-new cloudflare.WorkersCustomDomain("apex-worker-domain", {
-	accountId: cloudflareAccountId,
-	hostname: domain,
-	service: worker.name,
-	zoneId: zone.id
-}, { provider });
-
-new cloudflare.DnsRecord("posthog-ingestion-cname", {
-	zoneId: zone.id,
-	name: \`a.\${domain}\`,
-	type: "CNAME",
-	content: "us.i.posthog.com",
-	proxied: true,
-	ttl: 1
-}, { provider });
-
-export const cloudflareZoneId = zone.id;
-export const cloudflareZoneNameServers = zone.nameServers;
-export const workerName = worker.name;
-export const workerUrl = pulumi.interpolate\`https://\${domain}\`;
-${
-	config.boilerplate.saasFs
-		? `export const mainDatabaseId = mainDatabase.uuid;
-export const firstShardDatabaseId = firstShardDatabase.uuid;
-export const secondShardDatabaseId = secondShardDatabase.uuid;`
-		: `export const mainDatabaseId = undefined;
-export const firstShardDatabaseId = undefined;
-export const secondShardDatabaseId = undefined;`
-}
-export const environment = stack;
-`;
-}
-
-function pulumiGithubTs(config: Config, projectName: string): string {
-	if (!config.gitProvider.gitHub) {
-		return `export const repositoryName = undefined;
-`;
-	}
-
-	const envSecrets: Array<[string, string]> = [["CLOUDFLARE_API_TOKEN", "cloudflareApiToken"]];
-	const envVariables: Array<[string, string]> = [["ORIGIN", "domain"]];
-
-	if (config.boilerplate.saasFs) {
-		envSecrets.push(
-			["AUTH_SECRET", 'danku.requireSecret("authSecret")'],
-			["STRIPE_SECRET_KEY", 'danku.requireSecret("stripeSecretKey")'],
-			["STRIPE_WEBHOOK_SECRET", 'danku.requireSecret("stripeWebhookSecret")']
-		);
-		envVariables.push(["STRIPE_PUBLISHABLE_KEY", 'danku.require("stripePublishableKey")']);
-	}
-
-	if (config.boilerplate.marketing || config.boilerplate.saasFs) {
-		envVariables.push(["POSTHOG_API_KEY", "posthogProjectApiToken"]);
-	}
-
-	return `import * as github from "@pulumi/github";
-import * as pulumi from "@pulumi/pulumi";
-
-import { cloudflareApiToken, domain, githubOwner, githubToken } from "./config.js";
-import { posthogProjectApiToken } from "./posthog.js";
-
-const danku = new pulumi.Config("danku");
-
-const provider = new github.Provider("github-provider", {
-	owner: githubOwner,
-	token: githubToken
+	domains: [{
+		adopt: true,
+		domainName: domain,
+		zoneId: zone.id
+	}],
+	name: resourceName(appName),
+	observability: { enabled: true },
+	routes: [{
+		adopt: true,
+		pattern: \`\${domain}/*\`,
+		zoneId: zone.id
+	}],
+	url: true
+});
+${githubResources}
+console.log({
+	cloudflareZoneId: zone.id,
+	cloudflareZoneNameServers: zone.nameservers,
+	creemProMonthlyProductId,
+	environment: app.stage,
+	mainDatabaseId: ${hasSaas ? "mainDatabase.id" : "undefined"},
+	firstShardDatabaseId: ${hasSaas ? "firstShardDatabase.id" : "undefined"},
+	posthogProjectApiToken,
+	posthogProjectId,
+	secondShardDatabaseId: ${hasSaas ? "secondShardDatabase.id" : "undefined"},
+	workerName: website.name,
+	workerUrl: website.url ?? origin
 });
 
-const repository = new github.Repository("repository", {
-	name: "${projectName}",
-	visibility: "private",
-	hasIssues: true,
-	hasProjects: true,
-	hasWiki: false,
-	autoInit: false
-}, { provider });
+await app.finalize();
 
-new github.RepositoryEnvironment("production-environment", {
-	repository: repository.name,
-	environment: "Production"
-}, { provider });
-
-${envSecrets
-	.map(
-		([
-			name,
-			value
-		]) => `new github.ActionsEnvironmentSecret("${name.toLowerCase().replaceAll("_", "-")}", {
-	repository: repository.name,
-	environment: "Production",
-	secretName: "${name}",
-	value: ${value}
-}, { provider });`
-	)
-	.join("\n\n")}
-
-${envVariables
-	.map(
-		([
-			name,
-			value
-		]) => `new github.ActionsEnvironmentVariable("${name.toLowerCase().replaceAll("_", "-")}", {
-	repository: repository.name,
-	environment: "Production",
-	variableName: "${name}",
-	value: ${value}
-}, { provider });`
-	)
-	.join("\n\n")}
-
-new github.ActionsVariable("cloudflare-account-id", {
-	repository: repository.name,
-	variableName: "CLOUDFLARE_ACCOUNT_ID",
-	value: danku.get("cloudflareAccountId") ?? "REPLACE_WITH_CLOUDFLARE_ACCOUNT_ID"
-}, { provider });
-
-new github.ActionsSecret("cloudflare-api-token", {
-	repository: repository.name,
-	secretName: "CLOUDFLARE_API_TOKEN",
-	value: cloudflareApiToken
-}, { provider });
-
-export const repositoryName = repository.name;
-export const repositoryCloneUrl = repository.httpCloneUrl;
-`;
-}
-
-function pulumiPostHogTs(config: Config, projectName: string): string {
-	if (!config.boilerplate.marketing && !config.boilerplate.saasFs) {
-		return `export const posthogProjectApiToken = undefined;
-export const posthogProjectId = undefined;
-`;
+function env(name: string, fallbackName?: string, defaultValue?: string): string {
+	const value = process.env[name] ?? (fallbackName ? process.env[fallbackName] : undefined) ?? defaultValue;
+	if (!value || value.startsWith("REPLACE_WITH_")) {
+		throw new Error(\`Missing \${fallbackName ? \`\${name} or \${fallbackName}\` : name}\`);
 	}
+	return value;
+}
 
-	return `import * as posthog from "pulumi-posthog";
+function requiredEnv(name: string, fallbackName?: string): string {
+	return env(name, fallbackName);
+}
 
-import { posthogApiKey, posthogHost, posthogOrganizationId, stack } from "./config.js";
+function secretEnv(name: string, fallbackName?: string) {
+	return alchemy.secret.env(
+		name,
+		process.env[name] ?? (fallbackName ? process.env[fallbackName] : undefined),
+		\`Missing \${fallbackName ? \`\${name} or \${fallbackName}\` : name}\`
+	);
+}
 
-const provider = new posthog.Provider("posthog-provider", {
-	apiKey: posthogApiKey,
-	host: posthogHost,
-	organizationId: posthogOrganizationId
-});
-
-const project = new posthog.Project("posthog-project", {
-	name: "${projectName}-\${stack}",
-	organizationId: posthogOrganizationId,
-	timezone: "UTC"
-}, { provider });
-
-new posthog.FeatureFlag("new-onboarding", {
-	key: "new-onboarding",
-	name: "New onboarding",
-	active: false,
-	projectId: project.projectId.apply(String),
-	rolloutPercentage: 0
-}, { provider });
-
-export const posthogProjectApiToken = project.apiToken;
-export const posthogProjectId = project.projectId;
+function resourceName(name: string): string {
+	return app.stage === "prod" ? name : \`\${name}-\${app.stage}\`;
+}
 `;
-}
-
-function pulumiCreemTs(projectName: string): string {
-	return `import * as pulumi from "@pulumi/pulumi";
-
-import { stack } from "./config.js";
-
-type CreemProductInputs = {
-	name: string;
-	price: number;
-	currency: string;
-	billingType: "recurring" | "one_time";
-	billingPeriod?: "monthly" | "yearly";
-	testMode?: boolean;
-};
-
-class CreemProductProvider implements pulumi.dynamic.ResourceProvider {
-	async create(inputs: CreemProductInputs) {
-		const apiKey = process.env.CREEM_API_KEY;
-		if (!apiKey) {
-			throw new Error("Missing CREEM_API_KEY environment variable");
-		}
-
-		const response = await fetch(creemBaseUrl(inputs.testMode), {
-			method: "POST",
-			headers: {
-				"content-type": "application/json",
-				"x-api-key": apiKey
-			},
-			body: JSON.stringify({
-				name: inputs.name,
-				price: inputs.price,
-				currency: inputs.currency,
-				billing_type: inputs.billingType,
-				billing_period: inputs.billingPeriod
-			})
-		});
-
-		if (!response.ok) {
-			throw new Error(\`Creem product create failed: \${response.status} \${await response.text()}\`);
-		}
-
-		const product = await response.json() as { id: string };
-		return { id: product.id, outs: { ...inputs, id: product.id } };
-	}
-}
-
-class CreemProduct extends pulumi.dynamic.Resource {
-	declare id: pulumi.Output<string>;
-
-	constructor(name: string, args: CreemProductInputs, opts?: pulumi.CustomResourceOptions) {
-		super(new CreemProductProvider(), name, args, opts);
-	}
-}
-
-function creemBaseUrl(testMode = stack !== "prod") {
-	return testMode ? "https://test-api.creem.io/v1/products" : "https://api.creem.io/v1/products";
-}
-
-const proMonthly = new CreemProduct("pro-monthly-product", {
-	name: "${projectName} Pro Monthly",
-	price: 1900,
-	currency: "USD",
-	billingType: "recurring",
-	billingPeriod: "monthly"
-});
-
-export const creemProMonthlyProductId = proMonthly.id;
-`;
-}
-
-function pulumiIndexTs(config: Config): string {
-	const githubExport = config.gitProvider.gitHub
-		? 'export { repositoryCloneUrl, repositoryName } from "./github.js";\n'
-		: "";
-	const postHogExport =
-		config.boilerplate.marketing || config.boilerplate.saasFs
-			? 'export { posthogProjectApiToken, posthogProjectId } from "./posthog.js";\n'
-			: "";
-	const creemExport = config.boilerplate.saasFs
-		? 'export { creemProMonthlyProductId } from "./creem.js";\n'
-		: "";
-
-	return `export {
-	cloudflareZoneId,
-	cloudflareZoneNameServers,
-	firstShardDatabaseId,
-	mainDatabaseId,
-	secondShardDatabaseId,
-	workerName,
-	workerUrl
-} from "./cloudflare.js";
-${githubExport}${postHogExport}${creemExport}`;
 }
 
 function walkAst(node: AstTypes.BaseNode, visit: (node: AstTypes.BaseNode) => void): void {

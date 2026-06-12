@@ -51,7 +51,7 @@ const domainOption = Options.text("domain").pipe(
 	Options.withFallbackConfig(Config.string("DANKU_DOMAIN")),
 	Options.optional,
 	Options.withDescription(
-		"Root domain Pulumi will manage in Cloudflare. Falls back to DANKU_DOMAIN."
+		"Root domain Alchemy will manage in Cloudflare. Falls back to DANKU_DOMAIN."
 	)
 );
 

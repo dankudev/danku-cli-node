@@ -10,7 +10,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		return resolve(event);
 	}
 
-	const auth = getOrCreateAuth(event.platform!.env);
+	const auth = getOrCreateAuth(event.platform!.env as Env);
 	const session = await auth.api.getSession({
 		headers: event.request.headers
 	});

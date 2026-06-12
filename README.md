@@ -29,13 +29,13 @@ danku new sveltekit my-app
 The `new sveltekit` command mirrors the original Danku CLI flow, but uses CLI options with
 environment-variable fallbacks instead of a `.danku` config file:
 
-- generates Pulumi code that can create/manage the GitHub repository
+- generates Alchemy code that can create/manage the GitHub repository
 - runs `pnpm dlx sv create` with Danku's SvelteKit defaults
 - adds ESLint, Playwright, Prettier, Tailwind CSS, and Vitest via `sv add`
 - copies Danku boilerplate from this package's `templates` directory
 - optionally applies `marketing` or `saas-fs` boilerplate
-- generates `infra/pulumi` for Cloudflare, GitHub, PostHog, and Creem infrastructure
-- configures Cloudflare Workers adapter and a Pulumi-backed deployment workflow when configured
+- generates `alchemy.run.ts` plus custom Alchemy resources for Cloudflare, GitHub, PostHog, and Creem infrastructure
+- configures Cloudflare Workers adapter and an Alchemy-backed deployment workflow when configured
 
 Provider and target selection:
 
@@ -74,18 +74,20 @@ DANKU_DOMAIN=example.com \
 danku new sveltekit my-app
 ```
 
-After generation, configure provider secrets in `infra/pulumi` before running Pulumi.
-The CLI does not call GitHub, Cloudflare, PostHog, or Creem APIs directly; Pulumi owns those operations:
+After generation, configure provider secrets before running Alchemy.
+The CLI does not call GitHub, Cloudflare, PostHog, or Creem APIs directly; Alchemy owns those operations:
 
 ```bash
-cd my-app/infra/pulumi
+cd my-app
 pnpm install
-pulumi stack init dev
-pulumi config set cloudflare:apiToken --secret
-pulumi config set github:token --secret
-pulumi config set posthog:apiKey --secret
+export ALCHEMY_PASSWORD=...
+export CLOUDFLARE_API_TOKEN=...
+export GITHUB_OWNER=...
+export GITHUB_TOKEN=...
+export POSTHOG_API_KEY=...
 export CREEM_API_KEY=...
-pulumi preview
+pnpm run infra:read
+pnpm run infra:deploy
 ```
 
 ## Development
